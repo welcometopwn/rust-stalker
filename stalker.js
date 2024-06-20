@@ -1,3 +1,4 @@
+const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -12,7 +13,8 @@ let usernameMap = new Map();
 const defaultConfig = {
     apiKey: 'steam api key',
     intervalMinutes: 2,
-    webhookUrl: 'discord webhook'
+    discordToken: 'your_discord_bot_token',
+    channelId: 'your_channel_id'
 };
 
 // Function to load configuration
@@ -27,7 +29,20 @@ function loadConfig() {
 }
 
 const config = loadConfig();
-const { apiKey, intervalMinutes, webhookUrl } = config;
+const { apiKey, intervalMinutes, discordToken, channelId } = config;
+
+// Discord client setup
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+    // Initial load of the username map from the JSON file
+    loadUsernameMap();
+    checkSteamProfiles();
+    setInterval(checkSteamProfiles, intervalMinutes * 60 * 1000); // Set interval based on config
+});
+
+client.login(discordToken);
 
 // Function to load username map from JSON file
 function loadUsernameMap() {
@@ -70,25 +85,26 @@ function checkForUsernameChange(steamId, currentName) {
     if (names && names[names.length - 1] !== currentName) {
         const originalName = names[0];
         const previousName = names[names.length - 1];
-        sendWebhookNotification(originalName, previousName, currentName, steamId, names.length > 1);
+        sendDiscordNotification(originalName, previousName, currentName, steamId, names.length > 1);
     }
     updateUsernameMap(steamId, currentName);
 }
 
-// Function to send a notification via webhook
-function sendWebhookNotification(originalName, oldName, newName, steamId, showOriginal) {
+// Function to send a notification via Discord
+function sendDiscordNotification(originalName, oldName, newName, steamId, showOriginal) {
     const profileUrl = `https://steamcommunity.com/profiles/${steamId}`;
     const notificationContent = showOriginal
-        ? `${oldName} (og: ${originalName}) has changed their name to [${newName}](<${profileUrl}>)`
-        : `${oldName} has changed their name to [${newName}](<${profileUrl}>)`;
+        ? `${oldName} (og: ${originalName}) has changed their name to [${newName}](${profileUrl})`
+        : `${oldName} has changed their name to [${newName}](${profileUrl})`;
 
-    axios.post(webhookUrl, {
-        content: notificationContent
-    }).then(() => {
-        //console.log('Webhook sent successfully');
-    }).catch(err => {
-        console.error('Error sending webhook:', err);
-    });
+    const channel = client.channels.cache.get(channelId);
+    if (channel) {
+        channel.send(notificationContent).catch(err => {
+            console.error('Error sending message to Discord:', err);
+        });
+    } else {
+        console.error('Channel not found');
+    }
 }
 
 // Function to fetch and process Steam profiles
@@ -107,7 +123,6 @@ function checkSteamProfiles() {
                     const player = response.data.response.players[0];
                     const currentName = player.personaname;
                     checkForUsernameChange(id, currentName);
-                    //console.log(`Checked profile: ${currentName}`);
                 })
                 .catch(error => {
                     console.error('Error fetching Steam profile:', error);
@@ -115,8 +130,3 @@ function checkSteamProfiles() {
         });
     });
 }
-
-// Initial load of the username map from the JSON file
-loadUsernameMap();
-checkSteamProfiles();
-setInterval(checkSteamProfiles, intervalMinutes * 60 * 1000); // Set interval based on config
