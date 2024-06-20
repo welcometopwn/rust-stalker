@@ -1,0 +1,5 @@
+{
+  "apiKey": "steam api key",
+  "intervalMinutes": 2,
+  "webhookUrl": "discord webhook"
+}
