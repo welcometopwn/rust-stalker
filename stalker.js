@@ -58,7 +58,7 @@ client.on('messageCreate', async message => {
                 message.reply('Invalid Steam ID or Steam community link.');
                 return;
             }
-            const addResponse = addSteamId(steamId);
+            const addResponse = await addSteamId(steamId);
             message.reply(addResponse);
             checkSteamProfiles(); // Check the profile immediately after adding
             break;
@@ -76,6 +76,7 @@ client.on('messageCreate', async message => {
             message.reply('Unknown command.');
     }
 });
+
 
 client.login(discordToken);
 
@@ -95,24 +96,38 @@ function saveUsernameMap() {
 }
 
 // Function to add a Steam ID
-function addSteamId(steamId) {
+async function addSteamId(steamId) {
     loadUsernameMap();
-    if (!usernameMap.has(steamId)) {
-        usernameMap.set(steamId, { names: [], data: {} });
-        saveUsernameMap();
-        return `Steam ID ${steamId} added successfully.`;
-    } else {
-        return `Steam ID ${steamId} already exists.`;
+
+    // Fetch current username
+    const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${steamId}`;
+    try {
+        const playerSummaryResponse = await axios.get(playerSummaryUrl);
+        const player = playerSummaryResponse.data.response.players[0];
+        const currentName = player.personaname;
+
+        if (!usernameMap.has(steamId)) {
+            usernameMap.set(steamId, { names: [currentName], data: {} });
+            saveUsernameMap();
+            return `[${currentName}](https://steamcommunity.com/profiles/${steamId}) (${steamId}) has been added.`;
+        } else {
+            return `Steam ID ${steamId} already exists.`;
+        }
+    } catch (error) {
+        console.error('Error fetching Steam profile:', error);
+        return `Failed to fetch the username for Steam ID ${steamId}.`;
     }
 }
+
 
 // Function to remove a Steam ID
 function removeSteamId(steamId) {
     loadUsernameMap();
     if (usernameMap.has(steamId)) {
+        const currentName = usernameMap.get(steamId).names[0]; // Get the first name in the names array
         usernameMap.delete(steamId);
         saveUsernameMap();
-        return `Steam ID ${steamId} removed successfully.`;
+        return `[${currentName}](https://steamcommunity.com/profiles/${steamId}) (${steamId}) has been removed.`;
     } else {
         return `Steam ID ${steamId} not found.`;
     }
@@ -121,9 +136,12 @@ function removeSteamId(steamId) {
 // Function to resolve a Steam ID from a community link or SteamID64
 async function resolveSteamId(input) {
     if (/^\d{17}$/.test(input)) {
+        // Input is already a SteamID64
         return input;
     } else if (input.includes('steamcommunity.com')) {
         const vanityUrlMatch = input.match(/\/id\/([^\/]+)/);
+        const profileUrlMatch = input.match(/\/profiles\/(\d{17})/);
+
         if (vanityUrlMatch) {
             const vanityUrl = vanityUrlMatch[1];
             const resolveUrl = `https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key=${apiKey}&vanityurl=${vanityUrl}`;
@@ -135,10 +153,14 @@ async function resolveSteamId(input) {
             } catch (error) {
                 console.error('Error resolving Steam community ID:', error);
             }
+        } else if (profileUrlMatch) {
+            // Directly extract the SteamID from the URL
+            return profileUrlMatch[1];
         }
     }
     return null;
 }
+
 
 // Function to update username map with new name and data
 function updateUsernameMap(steamId, newName, newData) {
