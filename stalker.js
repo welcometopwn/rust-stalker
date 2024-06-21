@@ -251,7 +251,8 @@ async function checkSteamProfiles() {
                 vacBans: playerBans.NumberOfVACBans,
                 lastVacBan: playerBans.NumberOfVACBans > 0 ? playerBans.DaysSinceLastBan : null,
                 lastOnline: player.lastlogoff,
-                profileStatus: player.communityvisibilitystate === 3 ? 'public' : 'private'
+                profileStatus: player.communityvisibilitystate === 3 ? 'public' : 'private',
+                avatarhash: player.avatarhash
             };
 
             updateUsernameMap(id, currentName, newData); // Update map before checking for username change
