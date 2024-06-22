@@ -78,6 +78,11 @@ client.on('messageCreate', async message => {
             message.reply(removeResponse);
             break;
 
+        case 'list':
+            const listResponse = listSteamIds();
+            message.reply(listResponse);
+            break;
+
         default:
             message.reply('Unknown command.');
     }
@@ -169,6 +174,7 @@ async function resolveSteamId(input) {
 
 // Function to update username map with new name and data
 function updateUsernameMap(steamId, newName, newData) {
+    loadUsernameMap(); // Ensure the latest data is loaded
     if (!usernameMap.has(steamId)) {
         usernameMap.set(steamId, { names: [newName], data: newData });
     } else {
@@ -179,17 +185,12 @@ function updateUsernameMap(steamId, newName, newData) {
         if (entry.names[entry.names.length - 1] !== newName) {
             entry.names.push(newName);
         }
-        entry.data = newData;
+        entry.data = { ...entry.data, ...newData };
         usernameMap.set(steamId, entry);
     }
     saveUsernameMap();
 }
 
-// Function to get original name of a Steam ID
-function getOriginalName(steamId) {
-    const entry = usernameMap.get(steamId);
-    return entry && entry.names ? entry.names[0] : null;
-}
 
 // Function to check for username change and send notification
 function checkForUsernameChange(steamId, currentName) {
@@ -230,6 +231,7 @@ async function checkSteamProfiles() {
     const steamIds = Array.from(usernameMap.keys());
     for (const id of steamIds) {
         if (removedIds.has(id)) {
+            console.log(`Skipping removed Steam ID: ${id}`);
             continue; // Skip IDs that have been removed
         }
 
@@ -301,10 +303,25 @@ async function checkSteamProfiles() {
                 avatarhash: player.avatarhash || null
             };
 
+            console.log(`Updating data for Steam ID: ${id}`, newData);
+
             checkForUsernameChange(id, currentName); // Check for changes before updating
             updateUsernameMap(id, currentName, newData); // Update map after checking for username change
         } catch (error) {
             if (debug) console.error('Error fetching Steam profile:', error);
         }
     }
+}
+
+// Function to list all Steam IDs with their current name, original name, and notes
+function listSteamIds() {
+    loadUsernameMap();
+    let listMessage;
+    usernameMap.forEach((value, key) => {
+        const currentName = value.names[value.names.length - 1];
+        const originalName = value.names[0];
+        const notes = value.notes || 'no notes';
+        listMessage += `${currentName} (og: ${originalName}) (${key}) - ${notes}\n`;
+    });
+    return listMessage || 'No players found.';
 }
