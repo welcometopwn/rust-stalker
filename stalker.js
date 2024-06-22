@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -81,6 +81,19 @@ client.on('messageCreate', async message => {
         case 'list':
             const listResponse = listSteamIds();
             message.reply(listResponse);
+            break;
+
+        case 'check':
+            if (args.length < 1) {
+                message.reply('Please provide a Steam ID or Steam community link.');
+                return;
+            }
+            const checkSteamId = await resolveSteamId(args[0]);
+            if (!checkSteamId) {
+                message.reply('Invalid Steam ID or Steam community link.');
+                return;
+            }
+            await checkSteamProfile(message, checkSteamId);
             break;
 
         default:
@@ -191,7 +204,6 @@ function updateUsernameMap(steamId, newName, newData) {
     saveUsernameMap();
 }
 
-
 // Function to check for username change and send notification
 function checkForUsernameChange(steamId, currentName) {
     loadUsernameMap(); // Ensure latest data is loaded
@@ -212,8 +224,8 @@ function checkForUsernameChange(steamId, currentName) {
 function sendDiscordNotification(originalName, oldName, newName, steamId, showOriginal) {
     const profileUrl = `https://steamcommunity.com/profiles/${steamId}`;
     const notificationContent = showOriginal
-        ? `${oldName} (og: ${originalName}) has changed their name to [${newName}](${profileUrl})`
-        : `${oldName} has changed their name to [${newName}](${profileUrl})`;
+        ? `${oldName} (og: ${originalName}) has changed their name to [${newName}](<${profileUrl}>)`
+        : `${oldName} has changed their name to [${newName}](<${profileUrl}>)`;
 
     const channel = client.channels.cache.get(channelId);
     if (channel) {
@@ -300,7 +312,6 @@ async function checkSteamProfiles() {
                 lastVacBan: playerBans.NumberOfVACBans > 0 ? playerBans.DaysSinceLastBan : null,
                 lastOnline: player.lastlogoff || null,
                 profileStatus: player.communityvisibilitystate === 3 ? 'public' : 'private',
-                avatarhash: player.avatarhash || null
             };
 
             console.log(`Updating data for Steam ID: ${id}`, newData);
@@ -313,10 +324,206 @@ async function checkSteamProfiles() {
     }
 }
 
+// Function to check a Steam profile and send an embed to Discord
+async function checkSteamProfile(message, steamId) {
+    try {
+        const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${steamId}`;
+        const playerSummaryResponse = await axios.get(playerSummaryUrl);
+        const player = playerSummaryResponse.data.response.players[0];
+
+        if (!player) {
+            message.reply(`No summary available for Steam ID ${steamId}`);
+            return;
+        }
+
+        const currentName = player.personaname;
+
+        let steamLevel = null;
+        try {
+            const playerLevelUrl = `http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=${steamId}`;
+            const playerLevelResponse = await axios.get(playerLevelUrl);
+            steamLevel = playerLevelResponse.data.response.player_level;
+        } catch (error) {
+            if (debug) console.error('Error fetching Steam level:', error);
+        }
+
+        let playerBans = {};
+        try {
+            const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamId}`;
+            const playerBansResponse = await axios.get(playerBansUrl);
+            playerBans = playerBansResponse.data.players[0];
+        } catch (error) {
+            if (debug) console.error('Error fetching player bans:', error);
+        }
+
+        let rustHours = 0;
+        try {
+            const ownedGamesUrl = `http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`;
+            const ownedGamesResponse = await axios.get(ownedGamesUrl);
+            const rustGame = ownedGamesResponse.data.response.games?.find(game => game.appid === 252490);
+            rustHours = rustGame ? rustGame.playtime_forever / 60 : 0;
+        } catch (error) {
+            if (debug) console.error('Error fetching owned games:', error);
+        }
+
+        let friendsCount = 0;
+        try {
+            const friendsUrl = `http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=${steamId}&relationship=friend`;
+            const friendsResponse = await axios.get(friendsUrl);
+            friendsCount = friendsResponse.data.friendslist ? friendsResponse.data.friendslist.friends.length : 0;
+        } catch (error) {
+            if (debug) console.error('Error fetching friends list:', error);
+        }
+
+        const newData = {
+            accountCreated: player.timecreated || null,
+            steamLevel: steamLevel,
+            rustHours: rustHours,
+            friendsCount: friendsCount,
+            gameBans: playerBans.NumberOfGameBans || 0,
+            lastGameBan: playerBans.NumberOfGameBans > 0 ? playerBans.GameBanDate : null,
+            vacBans: playerBans.NumberOfVACBans || 0,
+            lastVacBan: playerBans.NumberOfVACBans > 0 ? playerBans.DaysSinceLastBan : null,
+            lastOnline: player.lastlogoff || null,
+            profileStatus: player.communityvisibilitystate === 3 ? 'Public' : 'Private',
+        };
+
+        const accountAge = calculateAccountAge(newData.accountCreated);
+        const lastOnlineFormatted = formatLastOnline(newData.lastOnline);
+        const notes = usernameMap.get(steamId)?.notes || 'No notes available';
+
+        const embed = new EmbedBuilder()
+            .setAuthor({
+                name: currentName,
+                url: `https://steamcommunity.com/profiles/${steamId}`,
+                iconURL: player.avatar
+            })
+            .addFields(
+                {
+                    name: "Historical Names",
+                    value: usernameMap.get(steamId)?.names.join(", ") || "No historical names",
+                    inline: true
+                },
+                {
+                    name: "Steam Level",
+                    value: steamLevel ? steamLevel.toString() : "Unknown",
+                    inline: true
+                },
+                {
+                    name: "Account Age",
+                    value: accountAge,
+                    inline: true
+                },
+                {
+                    name: "VAC Bans",
+                    value: newData.vacBans > 0 ? `${newData.vacBans} (${newData.lastVacBan} days ago)` : "0",
+                    inline: true
+                },
+                {
+                    name: "Game Bans",
+                    value: newData.gameBans > 0 ? `${newData.gameBans} (${newData.lastGameBan} days ago)` : "0",
+                    inline: true
+                },
+                {
+                    name: "Friends",
+                    value: friendsCount.toString(),
+                    inline: true
+                },
+                {
+                    name: "Rust Hours",
+                    value: rustHours.toFixed(0),
+                    inline: true
+                },
+                {
+                    name: "Profile Status",
+                    value: newData.profileStatus,
+                    inline: true
+                },
+                {
+                    name: "Last Online",
+                    value: lastOnlineFormatted,
+                    inline: true
+                },
+                {
+                    name: "Notes",
+                    value: notes,
+                    inline: false
+                }
+            )
+            .setColor("#00b0f4")
+            .setFooter({
+                text: `Steam ID: ${steamId}`,
+            })
+            .setTimestamp();
+
+        const actionRow = new ActionRowBuilder();
+
+        loadUsernameMap();
+        if (!usernameMap.has(steamId)) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`add_${steamId}`)
+                    .setLabel('Add to Database')
+                    .setStyle(ButtonStyle.Primary)
+            );
+        }
+
+        const replyMessage = await message.reply({ embeds: [embed], components: actionRow.components.length ? [actionRow] : [] });
+
+        // Handle button interactions
+        const filter = i => i.customId === `add_${steamId}` && i.user.id === message.author.id;
+        const collector = replyMessage.createMessageComponentCollector({ filter, time: 60000 });
+
+        collector.on('collect', async i => {
+            if (i.customId === `add_${steamId}`) {
+                const addResponse = await addSteamId(steamId, 'Added via /check command');
+                await i.update({ content: addResponse, components: [] });
+            }
+        });
+
+        collector.on('end', collected => {
+            if (collected.size === 0) {
+                replyMessage.edit({ components: [] });
+            }
+        });
+    } catch (error) {
+        console.error('Error checking Steam profile:', error);
+        message.reply(`Failed to check the Steam profile for Steam ID ${steamId}.`);
+    }
+}
+
+function calculateAccountAge(accountCreatedTimestamp) {
+    if (!accountCreatedTimestamp) return "Unknown";
+    const now = new Date();
+    const accountCreated = new Date(accountCreatedTimestamp * 1000);
+    const years = now.getFullYear() - accountCreated.getFullYear();
+    const months = now.getMonth() - accountCreated.getMonth();
+    const days = Math.floor((now - accountCreated) / (1000 * 60 * 60 * 24));
+    return `${years} years, ${months} months (${days} days)`;
+}
+
+function formatLastOnline(lastOnlineTimestamp) {
+    if (!lastOnlineTimestamp) return "Unknown";
+    const lastOnline = new Date(lastOnlineTimestamp * 1000);
+    const now = new Date();
+    const daysAgo = Math.floor((now - lastOnline) / (1000 * 60 * 60 * 24));
+    const hoursAgo = Math.floor((now - lastOnline) / (1000 * 60 * 60));
+    const minutesAgo = Math.floor((now - lastOnline) / (1000 * 60));
+
+    if (daysAgo > 0) {
+        return `${lastOnline.toLocaleDateString('en-GB')} ${lastOnline.toLocaleTimeString('en-GB')} (${daysAgo} days ago)`;
+    } else if (hoursAgo > 0) {
+        return `${lastOnline.toLocaleDateString('en-GB')} ${lastOnline.toLocaleTimeString('en-GB')} (${hoursAgo} hours ago)`;
+    } else {
+        return `${lastOnline.toLocaleDateString('en-GB')} ${lastOnline.toLocaleTimeString('en-GB')} (${minutesAgo} minutes ago)`;
+    }
+}
+
+
 // Function to list all Steam IDs with their current name, original name, and notes
 function listSteamIds() {
     loadUsernameMap();
-    let listMessage;
+    let listMessage = '';
     usernameMap.forEach((value, key) => {
         const currentName = value.names[value.names.length - 1];
         const originalName = value.names[0];
