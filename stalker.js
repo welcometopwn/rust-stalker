@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +33,7 @@ const config = loadConfig();
 const { apiKey, intervalMinutes, discordToken, channelId, debug } = config;
 
 // Set interval based on debug mode
-const interval = debug ? 10000 : intervalMinutes * 60 * 1000;
+const interval = debug ? 5000 : intervalMinutes * 60 * 1000;
 
 // Discord client setup
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
@@ -69,6 +69,17 @@ client.on('messageCreate', async message => {
     }
 });
 
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isModalSubmit()) return;
+    
+    const steamId = interaction.customId.split('_')[1];
+    const notes = interaction.fields.getTextInputValue('notesInput');
+    
+    const addResponse = await addSteamId(steamId, notes);
+    await interaction.reply(addResponse);
+    checkSteamProfiles(); // Check the profile immediately after adding
+});
+
 client.login(discordToken);
 
 // Function to load username map from JSON file
@@ -83,7 +94,12 @@ function loadUsernameMap() {
 // Function to save username map to JSON file
 function saveUsernameMap() {
     const json = JSON.stringify(Object.fromEntries(usernameMap), null, 2);
-    fs.writeFileSync(namesFilePath, json, 'utf8');
+    try {
+        fs.writeFileSync(namesFilePath, json, 'utf8');
+        if (debug) console.log('Successfully saved username map to data.json');
+    } catch (error) {
+        console.error('Error saving username map to data.json:', error);
+    }
 }
 
 // Function to handle add command
@@ -255,18 +271,9 @@ async function checkSteamProfiles() {
         const playerSummaryResponse = await axios.get(playerSummaryUrl);
         const players = playerSummaryResponse.data.response.players;
 
-        const steamLevelUrl = `http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=`;
+        // Fetch player bans in parallel
         const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamIds.join(',')}`;
-        const ownedGamesUrl = `http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=`;
-        const friendsUrl = `http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=`;
-
-        const [playerLevelResponses, playerBansResponse, ownedGamesResponses, friendsResponses] = await Promise.all([
-            Promise.all(players.map(player => axios.get(`${steamLevelUrl}${player.steamid}`))),
-            axios.get(playerBansUrl),
-            Promise.all(players.map(player => axios.get(`${ownedGamesUrl}${player.steamid}&include_appinfo=true&include_played_free_games=true`))),
-            Promise.all(players.map(player => axios.get(`${friendsUrl}${player.steamid}&relationship=friend`)))
-        ]);
-
+        const playerBansResponse = await axios.get(playerBansUrl);
         const playerBans = playerBansResponse.data.players.reduce((acc, ban) => {
             acc[ban.SteamId] = ban;
             return acc;
@@ -275,10 +282,29 @@ async function checkSteamProfiles() {
         for (const player of players) {
             const steamId = player.steamid;
             const currentName = player.personaname;
-            const steamLevel = playerLevelResponses.find(res => res.config.url.includes(steamId)).data.response.player_level;
-            const rustHours = (ownedGamesResponses.find(res => res.config.url.includes(steamId)).data.response.games?.find(game => game.appid === 252490)?.playtime_forever || 0) / 60;
-            const friendsCount = friendsResponses.find(res => res.config.url.includes(steamId)).data.friendslist?.friends.length || 0;
             const bans = playerBans[steamId];
+
+            // Default values if data is not available
+            let steamLevel = null;
+            let rustHours = 0;
+            let friendsCount = 0;
+
+            // Fetch additional data if profile is public
+            if (player.communityvisibilitystate === 3) { // Profile is public
+                try {
+                    const [playerLevelResponse, ownedGamesResponse, friendsResponse] = await Promise.all([
+                        axios.get(`http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=${steamId}`),
+                        axios.get(`http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`),
+                        axios.get(`http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=${steamId}&relationship=friend`)
+                    ]);
+
+                    steamLevel = playerLevelResponse.data.response.player_level;
+                    rustHours = (ownedGamesResponse.data.response.games?.find(game => game.appid === 252490)?.playtime_forever || 0) / 60;
+                    friendsCount = friendsResponse.data.friendslist?.friends.length || 0;
+                } catch (error) {
+                    console.error('Error fetching additional data for public profile:', error);
+                }
+            }
 
             const newData = {
                 accountCreated: player.timecreated || null,
@@ -290,14 +316,18 @@ async function checkSteamProfiles() {
                 vacBans: bans.NumberOfVACBans || 0,
                 lastVacBan: bans.NumberOfVACBans > 0 ? bans.DaysSinceLastBan : null,
                 lastOnline: player.lastlogoff || null,
-                profileStatus: player.communityvisibilitystate === 3 ? 'public' : 'private',
+                profileStatus: player.communityvisibilitystate === 3 ? 'Public' : 'Private',
             };
 
             checkForUsernameChange(steamId, currentName);
             updateUsernameMap(steamId, currentName, newData);
         }
     } catch (error) {
-        if (debug) console.error('Error fetching Steam profiles:', error);
+        if (error.response && error.response.status === 401) {
+            console.error('Unauthorized request. Check your API key.');
+        } else {
+            console.error('Error fetching Steam profiles:', error);
+        }
     }
 }
 
@@ -384,12 +414,15 @@ async function checkSteamProfile(message, steamId) {
                 { name: "Friends", value: friendsCount.toString(), inline: true },
                 { name: "Rust Hours", value: rustHours.toFixed(0), inline: true },
                 { name: "Profile Status", value: newData.profileStatus, inline: true },
-                { name: "Last Online", value: lastOnlineFormatted, inline: true },
-                { name: "Notes", value: notes, inline: false }
+                { name: "Last Online", value: lastOnlineFormatted, inline: true }
             )
             .setColor("#00b0f4")
             .setFooter({ text: `Steam ID: ${steamId}` })
             .setTimestamp();
+
+        if (usernameMap.has(steamId)) {
+            embed.addFields({ name: "Notes", value: "```" + `${notes}` + "```", inline: false });
+        }
 
         const actionRow = new ActionRowBuilder();
 
@@ -398,7 +431,7 @@ async function checkSteamProfile(message, steamId) {
             actionRow.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`add_${steamId}`)
-                    .setLabel('Add to Database')
+                    .setLabel('Track Profile')
                     .setStyle(ButtonStyle.Primary)
             );
         }
@@ -411,8 +444,22 @@ async function checkSteamProfile(message, steamId) {
 
         collector.on('collect', async i => {
             if (i.customId === `add_${steamId}`) {
-                const addResponse = await addSteamId(steamId, 'Added via /check command');
-                await i.update({ content: addResponse, components: [] });
+                // Create and show the modal to get notes from the user
+                const modal = new ModalBuilder()
+                    .setCustomId(`addNotes_${steamId}`)
+                    .setTitle('Add Notes for Steam Profile');
+
+                const notesInput = new TextInputBuilder()
+                    .setCustomId('notesInput')
+                    .setLabel('Notes')
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setRequired(false);
+
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(notesInput)
+                );
+
+                await i.showModal(modal);
             }
         });
 
