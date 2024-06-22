@@ -62,7 +62,8 @@ client.on('messageCreate', async message => {
                 message.reply('Invalid Steam ID or Steam community link.');
                 return;
             }
-            const addResponse = await addSteamId(steamId);
+            const notes = args.slice(1).join(' ');
+            const addResponse = await addSteamId(steamId, notes);
             message.reply(addResponse);
             checkSteamProfiles(); // Check the profile immediately after adding
             break;
@@ -99,7 +100,7 @@ function saveUsernameMap() {
 }
 
 // Function to add a Steam ID
-async function addSteamId(steamId) {
+async function addSteamId(steamId, notes) {
     loadUsernameMap();
 
     // Fetch current username
@@ -110,9 +111,9 @@ async function addSteamId(steamId) {
         const currentName = player.personaname;
 
         if (!usernameMap.has(steamId)) {
-            usernameMap.set(steamId, { names: [currentName], data: {} });
+            usernameMap.set(steamId, { names: [currentName], data: {}, notes: notes });
             saveUsernameMap();
-            return `[${currentName}](https://steamcommunity.com/profiles/${steamId}) (${steamId}) has been added.`;
+            return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been added.`;
         } else {
             return `Steam ID ${steamId} already exists.`;
         }
@@ -129,7 +130,7 @@ function removeSteamId(steamId) {
         const currentName = usernameMap.get(steamId).names[0]; // Get the first name in the names array
         usernameMap.delete(steamId);
         saveUsernameMap();
-        return `[${currentName}](https://steamcommunity.com/profiles/${steamId}) (${steamId}) has been removed.`;
+        return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been removed.`;
     } else {
         return `Steam ID ${steamId} not found.`;
     }
