@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const configFilePath = path.join(__dirname, 'config.json');
-const namesFilePath = 'data.json';
+const namesFilePath = path.join(__dirname, 'data.json');
 
 let usernameMap = new Map();
 let removedIds = new Set();
