@@ -7,6 +7,7 @@ const configFilePath = path.join(__dirname, 'config.json');
 const namesFilePath = 'data.json';
 
 let usernameMap = new Map();
+let removedIds = new Set();
 
 // Default configuration
 const defaultConfig = {
@@ -14,7 +15,7 @@ const defaultConfig = {
     intervalMinutes: 60,
     discordToken: 'your_discord_bot_token',
     channelId: 'your_channel_id',
-    debug: false // Add debug mode to the configuration
+    debug: false
 };
 
 // Function to load configuration
@@ -32,7 +33,7 @@ const config = loadConfig();
 const { apiKey, intervalMinutes, discordToken, channelId, debug } = config;
 
 // Set interval based on debug mode
-const interval = debug ? 5000 : intervalMinutes * 60 * 1000;
+const interval = debug ? 10000 : intervalMinutes * 60 * 1000;
 
 // Discord client setup
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
@@ -113,6 +114,7 @@ async function addSteamId(steamId, notes) {
         if (!usernameMap.has(steamId)) {
             usernameMap.set(steamId, { names: [currentName], data: {}, notes: notes });
             saveUsernameMap();
+            removedIds.delete(steamId); // Ensure the ID is not in the removed set
             return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been added.`;
         } else {
             return `Steam ID ${steamId} already exists.`;
@@ -130,6 +132,7 @@ function removeSteamId(steamId) {
         const currentName = usernameMap.get(steamId).names[0]; // Get the first name in the names array
         usernameMap.delete(steamId);
         saveUsernameMap();
+        removedIds.add(steamId); // Add the ID to the removed set
         return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been removed.`;
     } else {
         return `Steam ID ${steamId} not found.`;
@@ -190,13 +193,18 @@ function getOriginalName(steamId) {
 
 // Function to check for username change and send notification
 function checkForUsernameChange(steamId, currentName) {
+    loadUsernameMap(); // Ensure latest data is loaded
     const entry = usernameMap.get(steamId);
+    console.log(`Checking for username change for Steam ID: ${steamId}`);
     if (entry && entry.names && entry.names[entry.names.length - 1] !== currentName) {
+        console.log(`Username change detected for Steam ID: ${steamId}`);
         const originalName = entry.names[0];
         const previousName = entry.names[entry.names.length - 1];
         sendDiscordNotification(originalName, previousName, currentName, steamId, entry.names.length > 1);
+    } else {
+        console.log(`No username change detected for Steam ID: ${steamId}`);
     }
-    updateUsernameMap(steamId, currentName, entry.data);
+    updateUsernameMap(steamId, currentName, entry ? entry.data : {});
 }
 
 // Function to send a notification via Discord
@@ -208,6 +216,7 @@ function sendDiscordNotification(originalName, oldName, newName, steamId, showOr
 
     const channel = client.channels.cache.get(channelId);
     if (channel) {
+        console.log(`Sending Discord notification for Steam ID: ${steamId}`);
         channel.send(notificationContent).catch(err => {
             console.error('Error sending message to Discord:', err);
         });
@@ -220,6 +229,10 @@ function sendDiscordNotification(originalName, oldName, newName, steamId, showOr
 async function checkSteamProfiles() {
     const steamIds = Array.from(usernameMap.keys());
     for (const id of steamIds) {
+        if (removedIds.has(id)) {
+            continue; // Skip IDs that have been removed
+        }
+
         try {
             const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${id}`;
             const playerSummaryResponse = await axios.get(playerSummaryUrl);
@@ -288,8 +301,8 @@ async function checkSteamProfiles() {
                 avatarhash: player.avatarhash || null
             };
 
-            updateUsernameMap(id, currentName, newData); // Update map before checking for username change
-            checkForUsernameChange(id, currentName);
+            checkForUsernameChange(id, currentName); // Check for changes before updating
+            updateUsernameMap(id, currentName, newData); // Update map after checking for username change
         } catch (error) {
             if (debug) console.error('Error fetching Steam profile:', error);
         }
