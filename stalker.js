@@ -302,7 +302,7 @@ async function checkSteamProfiles() {
                     rustHours = (ownedGamesResponse.data.response.games?.find(game => game.appid === 252490)?.playtime_forever || 0) / 60;
                     friendsCount = friendsResponse.data.friendslist?.friends.length || 0;
                 } catch (error) {
-                    console.error('Error fetching additional data for public profile:', error);
+                    if (debug) console.error('Error fetching additional data for public profile:', error);
                 }
             }
 
