@@ -40,7 +40,6 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    // Initial load of the username map from the JSON file
     loadUsernameMap();
     checkSteamProfiles();
     setInterval(checkSteamProfiles, interval);
@@ -54,48 +53,17 @@ client.on('messageCreate', async message => {
 
     switch (command) {
         case 'add':
-            if (args.length < 1) {
-                message.reply('Please provide a Steam ID or Steam community link.');
-                return;
-            }
-            const steamId = await resolveSteamId(args[0]);
-            if (!steamId) {
-                message.reply('Invalid Steam ID or Steam community link.');
-                return;
-            }
-            const notes = args.slice(1).join(' ');
-            const addResponse = await addSteamId(steamId, notes);
-            message.reply(addResponse);
-            checkSteamProfiles(); // Check the profile immediately after adding
+            await handleAddCommand(message, args);
             break;
-
         case 'remove':
-            if (args.length < 1) {
-                message.reply('Please provide a Steam ID.');
-                return;
-            }
-            const removeResponse = removeSteamId(args[0]);
-            message.reply(removeResponse);
+            handleRemoveCommand(message, args);
             break;
-
         case 'list':
-            const listResponse = listSteamIds();
-            message.reply(listResponse);
+            handleListCommand(message);
             break;
-
         case 'check':
-            if (args.length < 1) {
-                message.reply('Please provide a Steam ID or Steam community link.');
-                return;
-            }
-            const checkSteamId = await resolveSteamId(args[0]);
-            if (!checkSteamId) {
-                message.reply('Invalid Steam ID or Steam community link.');
-                return;
-            }
-            await checkSteamProfile(message, checkSteamId);
+            await handleCheckCommand(message, args);
             break;
-
         default:
             message.reply('Unknown command.');
     }
@@ -118,11 +86,57 @@ function saveUsernameMap() {
     fs.writeFileSync(namesFilePath, json, 'utf8');
 }
 
+// Function to handle add command
+async function handleAddCommand(message, args) {
+    if (args.length < 1) {
+        message.reply('Please provide a Steam ID or Steam community link.');
+        return;
+    }
+    const steamId = await resolveSteamId(args[0]);
+    if (!steamId) {
+        message.reply('Invalid Steam ID or Steam community link.');
+        return;
+    }
+    const notes = args.slice(1).join(' ');
+    const addResponse = await addSteamId(steamId, notes);
+    message.reply(addResponse);
+    checkSteamProfiles(); // Check the profile immediately after adding
+}
+
+// Function to handle remove command
+function handleRemoveCommand(message, args) {
+    if (args.length < 1) {
+        message.reply('Please provide a Steam ID.');
+        return;
+    }
+    const removeResponse = removeSteamId(args[0]);
+    message.reply(removeResponse);
+}
+
+// Function to handle list command
+function handleListCommand(message) {
+    const listResponse = listSteamIds();
+    message.reply(listResponse);
+}
+
+// Function to handle check command
+async function handleCheckCommand(message, args) {
+    if (args.length < 1) {
+        message.reply('Please provide a Steam ID or Steam community link.');
+        return;
+    }
+    const steamId = await resolveSteamId(args[0]);
+    if (!steamId) {
+        message.reply('Invalid Steam ID or Steam community link.');
+        return;
+    }
+    await checkSteamProfile(message, steamId);
+}
+
 // Function to add a Steam ID
 async function addSteamId(steamId, notes) {
     loadUsernameMap();
 
-    // Fetch current username
     const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${steamId}`;
     try {
         const playerSummaryResponse = await axios.get(playerSummaryUrl);
@@ -132,7 +146,7 @@ async function addSteamId(steamId, notes) {
         if (!usernameMap.has(steamId)) {
             usernameMap.set(steamId, { names: [currentName], data: {}, notes: notes });
             saveUsernameMap();
-            removedIds.delete(steamId); // Ensure the ID is not in the removed set
+            removedIds.delete(steamId);
             return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been added.`;
         } else {
             return `Steam ID ${steamId} already exists.`;
@@ -147,10 +161,10 @@ async function addSteamId(steamId, notes) {
 function removeSteamId(steamId) {
     loadUsernameMap();
     if (usernameMap.has(steamId)) {
-        const currentName = usernameMap.get(steamId).names[0]; // Get the first name in the names array
+        const currentName = usernameMap.get(steamId).names[0];
         usernameMap.delete(steamId);
         saveUsernameMap();
-        removedIds.add(steamId); // Add the ID to the removed set
+        removedIds.add(steamId);
         return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been removed.`;
     } else {
         return `Steam ID ${steamId} not found.`;
@@ -160,7 +174,6 @@ function removeSteamId(steamId) {
 // Function to resolve a Steam ID from a community link or SteamID64
 async function resolveSteamId(input) {
     if (/^\d{17}$/.test(input)) {
-        // Input is already a SteamID64
         return input;
     } else if (input.includes('steamcommunity.com')) {
         const vanityUrlMatch = input.match(/\/id\/([^\/]+)/);
@@ -178,7 +191,6 @@ async function resolveSteamId(input) {
                 console.error('Error resolving Steam community ID:', error);
             }
         } else if (profileUrlMatch) {
-            // Directly extract the SteamID from the URL
             return profileUrlMatch[1];
         }
     }
@@ -187,7 +199,7 @@ async function resolveSteamId(input) {
 
 // Function to update username map with new name and data
 function updateUsernameMap(steamId, newName, newData) {
-    loadUsernameMap(); // Ensure the latest data is loaded
+    loadUsernameMap();
     if (!usernameMap.has(steamId)) {
         usernameMap.set(steamId, { names: [newName], data: newData });
     } else {
@@ -206,16 +218,12 @@ function updateUsernameMap(steamId, newName, newData) {
 
 // Function to check for username change and send notification
 function checkForUsernameChange(steamId, currentName) {
-    loadUsernameMap(); // Ensure latest data is loaded
+    loadUsernameMap();
     const entry = usernameMap.get(steamId);
-    console.log(`Checking for username change for Steam ID: ${steamId}`);
     if (entry && entry.names && entry.names[entry.names.length - 1] !== currentName) {
-        console.log(`Username change detected for Steam ID: ${steamId}`);
         const originalName = entry.names[0];
         const previousName = entry.names[entry.names.length - 1];
         sendDiscordNotification(originalName, previousName, currentName, steamId, entry.names.length > 1);
-    } else {
-        console.log(`No username change detected for Steam ID: ${steamId}`);
     }
     updateUsernameMap(steamId, currentName, entry ? entry.data : {});
 }
@@ -229,7 +237,6 @@ function sendDiscordNotification(originalName, oldName, newName, steamId, showOr
 
     const channel = client.channels.cache.get(channelId);
     if (channel) {
-        console.log(`Sending Discord notification for Steam ID: ${steamId}`);
         channel.send(notificationContent).catch(err => {
             console.error('Error sending message to Discord:', err);
         });
@@ -240,87 +247,57 @@ function sendDiscordNotification(originalName, oldName, newName, steamId, showOr
 
 // Function to fetch and process Steam profiles
 async function checkSteamProfiles() {
-    const steamIds = Array.from(usernameMap.keys());
-    for (const id of steamIds) {
-        if (removedIds.has(id)) {
-            console.log(`Skipping removed Steam ID: ${id}`);
-            continue; // Skip IDs that have been removed
-        }
+    const steamIds = Array.from(usernameMap.keys()).filter(id => !removedIds.has(id));
+    if (steamIds.length === 0) return;
 
-        try {
-            const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${id}`;
-            const playerSummaryResponse = await axios.get(playerSummaryUrl);
-            const player = playerSummaryResponse.data.response.players[0];
+    const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${steamIds.join(',')}`;
+    try {
+        const playerSummaryResponse = await axios.get(playerSummaryUrl);
+        const players = playerSummaryResponse.data.response.players;
 
-            // Check if the player summary is available
-            if (!player) {
-                console.error(`No summary available for Steam ID ${id}`);
-                continue;
-            }
+        const steamLevelUrl = `http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=`;
+        const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamIds.join(',')}`;
+        const ownedGamesUrl = `http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=`;
+        const friendsUrl = `http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=`;
 
+        const [playerLevelResponses, playerBansResponse, ownedGamesResponses, friendsResponses] = await Promise.all([
+            Promise.all(players.map(player => axios.get(`${steamLevelUrl}${player.steamid}`))),
+            axios.get(playerBansUrl),
+            Promise.all(players.map(player => axios.get(`${ownedGamesUrl}${player.steamid}&include_appinfo=true&include_played_free_games=true`))),
+            Promise.all(players.map(player => axios.get(`${friendsUrl}${player.steamid}&relationship=friend`)))
+        ]);
+
+        const playerBans = playerBansResponse.data.players.reduce((acc, ban) => {
+            acc[ban.SteamId] = ban;
+            return acc;
+        }, {});
+
+        for (const player of players) {
+            const steamId = player.steamid;
             const currentName = player.personaname;
-
-            // Fetch player level
-            let steamLevel = null;
-            try {
-                const playerLevelUrl = `http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=${id}`;
-                const playerLevelResponse = await axios.get(playerLevelUrl);
-                steamLevel = playerLevelResponse.data.response.player_level;
-            } catch (error) {
-                if (debug) console.error('Error fetching Steam level:', error);
-            }
-
-            // Fetch player bans
-            let playerBans = {};
-            try {
-                const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${id}`;
-                const playerBansResponse = await axios.get(playerBansUrl);
-                playerBans = playerBansResponse.data.players[0];
-            } catch (error) {
-                if (debug) console.error('Error fetching player bans:', error);
-            }
-
-            // Fetch owned games
-            let rustHours = 0;
-            try {
-                const ownedGamesUrl = `http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${id}&include_appinfo=true&include_played_free_games=true`;
-                const ownedGamesResponse = await axios.get(ownedGamesUrl);
-                const rustGame = ownedGamesResponse.data.response.games?.find(game => game.appid === 252490);
-                rustHours = rustGame ? rustGame.playtime_forever / 60 : 0;
-            } catch (error) {
-                if (debug) console.error('Error fetching owned games:', error);
-            }
-
-            // Fetch friends list
-            let friendsCount = 0;
-            try {
-                const friendsUrl = `http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=${id}&relationship=friend`;
-                const friendsResponse = await axios.get(friendsUrl);
-                friendsCount = friendsResponse.data.friendslist ? friendsResponse.data.friendslist.friends.length : 0;
-            } catch (error) {
-                if (debug) console.error('Error fetching friends list:', error);
-            }
+            const steamLevel = playerLevelResponses.find(res => res.config.url.includes(steamId)).data.response.player_level;
+            const rustHours = (ownedGamesResponses.find(res => res.config.url.includes(steamId)).data.response.games?.find(game => game.appid === 252490)?.playtime_forever || 0) / 60;
+            const friendsCount = friendsResponses.find(res => res.config.url.includes(steamId)).data.friendslist?.friends.length || 0;
+            const bans = playerBans[steamId];
 
             const newData = {
                 accountCreated: player.timecreated || null,
                 steamLevel: steamLevel,
                 rustHours: rustHours,
                 friendsCount: friendsCount,
-                gameBans: playerBans.NumberOfGameBans || 0,
-                lastGameBan: playerBans.NumberOfGameBans > 0 ? playerBans.GameBanDate : null,
-                vacBans: playerBans.NumberOfVACBans || 0,
-                lastVacBan: playerBans.NumberOfVACBans > 0 ? playerBans.DaysSinceLastBan : null,
+                gameBans: bans.NumberOfGameBans || 0,
+                lastGameBan: bans.NumberOfGameBans > 0 ? bans.GameBanDate : null,
+                vacBans: bans.NumberOfVACBans || 0,
+                lastVacBan: bans.NumberOfVACBans > 0 ? bans.DaysSinceLastBan : null,
                 lastOnline: player.lastlogoff || null,
                 profileStatus: player.communityvisibilitystate === 3 ? 'public' : 'private',
             };
 
-            console.log(`Updating data for Steam ID: ${id}`, newData);
-
-            checkForUsernameChange(id, currentName); // Check for changes before updating
-            updateUsernameMap(id, currentName, newData); // Update map after checking for username change
-        } catch (error) {
-            if (debug) console.error('Error fetching Steam profile:', error);
+            checkForUsernameChange(steamId, currentName);
+            updateUsernameMap(steamId, currentName, newData);
         }
+    } catch (error) {
+        if (debug) console.error('Error fetching Steam profiles:', error);
     }
 }
 
@@ -399,61 +376,19 @@ async function checkSteamProfile(message, steamId) {
                 iconURL: player.avatar
             })
             .addFields(
-                {
-                    name: "Historical Names",
-                    value: usernameMap.get(steamId)?.names.join(", ") || "No historical names",
-                    inline: true
-                },
-                {
-                    name: "Steam Level",
-                    value: steamLevel ? steamLevel.toString() : "Unknown",
-                    inline: true
-                },
-                {
-                    name: "Account Age",
-                    value: accountAge,
-                    inline: true
-                },
-                {
-                    name: "VAC Bans",
-                    value: newData.vacBans > 0 ? `${newData.vacBans} (${newData.lastVacBan} days ago)` : "0",
-                    inline: true
-                },
-                {
-                    name: "Game Bans",
-                    value: newData.gameBans > 0 ? `${newData.gameBans} (${newData.lastGameBan} days ago)` : "0",
-                    inline: true
-                },
-                {
-                    name: "Friends",
-                    value: friendsCount.toString(),
-                    inline: true
-                },
-                {
-                    name: "Rust Hours",
-                    value: rustHours.toFixed(0),
-                    inline: true
-                },
-                {
-                    name: "Profile Status",
-                    value: newData.profileStatus,
-                    inline: true
-                },
-                {
-                    name: "Last Online",
-                    value: lastOnlineFormatted,
-                    inline: true
-                },
-                {
-                    name: "Notes",
-                    value: notes,
-                    inline: false
-                }
+                { name: "Historical Names", value: usernameMap.get(steamId)?.names.join(", ") || "No historical names", inline: true },
+                { name: "Steam Level", value: steamLevel ? steamLevel.toString() : "Unknown", inline: true },
+                { name: "Account Age", value: accountAge, inline: true },
+                { name: "VAC Bans", value: newData.vacBans > 0 ? `${newData.vacBans} (${newData.lastVacBan} days ago)` : "0", inline: true },
+                { name: "Game Bans", value: newData.gameBans > 0 ? `${newData.gameBans} (${newData.lastGameBan} days ago)` : "0", inline: true },
+                { name: "Friends", value: friendsCount.toString(), inline: true },
+                { name: "Rust Hours", value: rustHours.toFixed(0), inline: true },
+                { name: "Profile Status", value: newData.profileStatus, inline: true },
+                { name: "Last Online", value: lastOnlineFormatted, inline: true },
+                { name: "Notes", value: notes, inline: false }
             )
             .setColor("#00b0f4")
-            .setFooter({
-                text: `Steam ID: ${steamId}`,
-            })
+            .setFooter({ text: `Steam ID: ${steamId}` })
             .setTimestamp();
 
         const actionRow = new ActionRowBuilder();
@@ -494,13 +429,21 @@ async function checkSteamProfile(message, steamId) {
 
 function calculateAccountAge(accountCreatedTimestamp) {
     if (!accountCreatedTimestamp) return "Unknown";
+    
     const now = new Date();
     const accountCreated = new Date(accountCreatedTimestamp * 1000);
-    const years = now.getFullYear() - accountCreated.getFullYear();
-    const months = now.getMonth() - accountCreated.getMonth();
-    const days = Math.floor((now - accountCreated) / (1000 * 60 * 60 * 24));
+    let years = now.getFullYear() - accountCreated.getFullYear();
+    let months = now.getMonth() - accountCreated.getMonth();
+    let days = Math.floor((now - accountCreated) / (1000 * 60 * 60 * 24));
+
+    if (months < 0) {
+        years--;
+        months += 12;
+    }
+
     return `${years} years, ${months} months (${days} days)`;
 }
+
 
 function formatLastOnline(lastOnlineTimestamp) {
     if (!lastOnlineTimestamp) return "Unknown";
@@ -518,7 +461,6 @@ function formatLastOnline(lastOnlineTimestamp) {
         return `${lastOnline.toLocaleDateString('en-GB')} ${lastOnline.toLocaleTimeString('en-GB')} (${minutesAgo} minutes ago)`;
     }
 }
-
 
 // Function to list all Steam IDs with their current name, original name, and notes
 function listSteamIds() {
