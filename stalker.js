@@ -42,7 +42,6 @@ client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
     loadUsernameMap();
     checkSteamProfiles();
-    setInterval(checkSteamProfiles, interval);
 });
 
 client.on('messageCreate', async message => {
@@ -265,65 +264,73 @@ function sendDiscordNotification(originalName, oldName, newName, steamId, showOr
 }
 
 // Function to fetch and process Steam profiles
+// Function to fetch and process Steam profiles
 async function checkSteamProfiles() {
     const steamIds = Array.from(usernameMap.keys()).filter(id => !removedIds.has(id));
     if (steamIds.length === 0) return;
 
-    const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${steamIds.join(',')}`;
     try {
-        const playerSummaryResponse = await axios.get(playerSummaryUrl);
-        const players = playerSummaryResponse.data.response.players;
+        // Split steamIds into chunks of 100 to respect Steam API limits
+        const chunkSize = 100;
+        for (let i = 0; i < steamIds.length; i += chunkSize) {
+            const chunk = steamIds.slice(i, i + chunkSize);
 
-        // Fetch player bans in parallel
-        const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamIds.join(',')}`;
-        const playerBansResponse = await axios.get(playerBansUrl);
-        const playerBans = playerBansResponse.data.players.reduce((acc, ban) => {
-            acc[ban.SteamId] = ban;
-            return acc;
-        }, {});
+            // Fetch player summaries
+            const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${chunk.join(',')}`;
+            const playerSummaryResponse = await axios.get(playerSummaryUrl);
+            const players = playerSummaryResponse.data.response.players;
 
-        for (const player of players) {
-            const steamId = player.steamid;
-            const currentName = player.personaname;
-            const bans = playerBans[steamId];
+            // Fetch player bans
+            const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${chunk.join(',')}`;
+            const playerBansResponse = await axios.get(playerBansUrl);
+            const playerBans = playerBansResponse.data.players.reduce((acc, ban) => {
+                acc[ban.SteamId] = ban;
+                return acc;
+            }, {});
 
-            // Default values if data is not available
-            let steamLevel = null;
-            let rustHours = 0;
-            let friendsCount = 0;
+            for (const player of players) {
+                const steamId = player.steamid;
+                const currentName = player.personaname;
+                const bans = playerBans[steamId];
 
-            // Fetch additional data if profile is public
-            if (player.communityvisibilitystate === 3) { // Profile is public
-                try {
-                    const [playerLevelResponse, ownedGamesResponse, friendsResponse] = await Promise.all([
-                        axios.get(`http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=${steamId}`),
-                        axios.get(`http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`),
-                        axios.get(`http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=${steamId}&relationship=friend`)
-                    ]);
+                // Default values if data is not available
+                let steamLevel = null;
+                let rustHours = 0;
+                let friendsCount = 0;
 
-                    steamLevel = playerLevelResponse.data.response.player_level;
-                    rustHours = (ownedGamesResponse.data.response.games?.find(game => game.appid === 252490)?.playtime_forever || 0) / 60;
-                    friendsCount = friendsResponse.data.friendslist?.friends.length || 0;
-                } catch (error) {
-                    if (debug) console.error('Error fetching additional data for public profile:', error);
+                // Fetch additional data if profile is public
+                if (player.communityvisibilitystate === 3) { // Profile is public
+                    try {
+                        const [playerLevelResponse, ownedGamesResponse, friendsResponse] = await Promise.all([
+                            axios.get(`http://api.steampowered.com/IPlayerService/GetSteamLevel/v1/?key=${apiKey}&steamid=${steamId}`),
+                            axios.get(`http://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${apiKey}&steamid=${steamId}&include_appinfo=true&include_played_free_games=true`),
+                            axios.get(`http://api.steampowered.com/ISteamUser/GetFriendList/v1/?key=${apiKey}&steamid=${steamId}&relationship=friend`)
+                        ]);
+
+                        steamLevel = playerLevelResponse.data.response.player_level;
+                        rustHours = (ownedGamesResponse.data.response.games?.find(game => game.appid === 252490)?.playtime_forever || 0) / 60;
+                        friendsCount = friendsResponse.data.friendslist?.friends.length || 0;
+                    } catch (error) {
+                        if (debug) console.error('Error fetching additional data for public profile:', error);
+                    }
                 }
+
+                const newData = {
+                    accountCreated: player.timecreated || null,
+                    steamLevel: steamLevel,
+                    rustHours: rustHours,
+                    friendsCount: friendsCount,
+                    gameBans: bans.NumberOfGameBans || 0,
+                    lastGameBan: bans.NumberOfGameBans > 0 ? bans.GameBanDate : null,
+                    vacBans: bans.NumberOfVACBans || 0,
+                    lastVacBan: bans.NumberOfVACBans > 0 ? bans.DaysSinceLastBan : null,
+                    lastOnline: player.personastate === 0 ? formatLastOnline(player.lastlogoff) : "Online",
+                    profileStatus: player.communityvisibilitystate === 3 ? 'Public' : 'Private',
+                };
+
+                checkForUsernameChange(steamId, currentName);
+                updateUsernameMap(steamId, currentName, newData);
             }
-
-            const newData = {
-                accountCreated: player.timecreated || null,
-                steamLevel: steamLevel,
-                rustHours: rustHours,
-                friendsCount: friendsCount,
-                gameBans: bans.NumberOfGameBans || 0,
-                lastGameBan: bans.NumberOfGameBans > 0 ? bans.GameBanDate : null,
-                vacBans: bans.NumberOfVACBans || 0,
-                lastVacBan: bans.NumberOfVACBans > 0 ? bans.DaysSinceLastBan : null,
-                lastOnline: player.personastate === 0 ? formatLastOnline(player.lastlogoff) : "Online",
-                profileStatus: player.communityvisibilitystate === 3 ? 'Public' : 'Private',
-            };
-
-            checkForUsernameChange(steamId, currentName);
-            updateUsernameMap(steamId, currentName, newData);
         }
     } catch (error) {
         if (error.response && error.response.status === 401) {
@@ -332,6 +339,9 @@ async function checkSteamProfiles() {
             console.error('Error fetching Steam profiles:', error);
         }
     }
+
+    // Schedule the next check
+    setTimeout(checkSteamProfiles, interval);
 }
 
 // Function to check a Steam profile and send an embed to Discord
