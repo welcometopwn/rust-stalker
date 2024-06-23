@@ -46,6 +46,8 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async message => {
+    if (message.channel.id !== channelId) return;
+
     if (!message.content.startsWith('/')) return;
 
     const args = message.content.slice(1).split(' ');
@@ -68,6 +70,7 @@ client.on('messageCreate', async message => {
             message.reply('Unknown command.');
     }
 });
+
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isModalSubmit()) return;
@@ -315,7 +318,7 @@ async function checkSteamProfiles() {
                 lastGameBan: bans.NumberOfGameBans > 0 ? bans.GameBanDate : null,
                 vacBans: bans.NumberOfVACBans || 0,
                 lastVacBan: bans.NumberOfVACBans > 0 ? bans.DaysSinceLastBan : null,
-                lastOnline: player.lastlogoff || null,
+                lastOnline: player.personastate === 0 ? formatLastOnline(player.lastlogoff) : "Online",
                 profileStatus: player.communityvisibilitystate === 3 ? 'Public' : 'Private',
             };
 
@@ -421,7 +424,7 @@ async function checkSteamProfile(message, steamId) {
             .setTimestamp();
 
         if (usernameMap.has(steamId)) {
-            embed.addFields({ name: "Notes", value: "```" + `${notes}` + "```", inline: false });
+            embed.addFields({ name: "Notes", value: `\`\`\`${notes}\`\`\``, inline: false });
         }
 
         const actionRow = new ActionRowBuilder();
