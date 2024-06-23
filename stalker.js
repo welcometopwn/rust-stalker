@@ -264,7 +264,6 @@ function sendDiscordNotification(originalName, oldName, newName, steamId, showOr
 }
 
 // Function to fetch and process Steam profiles
-// Function to fetch and process Steam profiles
 async function checkSteamProfiles() {
     const steamIds = Array.from(usernameMap.keys()).filter(id => !removedIds.has(id));
     if (steamIds.length === 0) return;
