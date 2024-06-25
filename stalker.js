@@ -531,9 +531,9 @@ function listSteamIds() {
         const originalName = value.names[0];
         const showOriginalName = value.names.length > 1;
         const nameDisplay = showOriginalName ? `${currentName} (og: ${originalName})` : currentName;
-        const notes = value.notes || 'no notes';
+        const notes = value.notes ? ` | ${value.notes}` : '';
 
-        listMessage += `- [${nameDisplay}](<${profileUrl}>) (${key}) | ${notes}\n`;
+        listMessage += `- [${nameDisplay}](<${profileUrl}>) (${key})${notes}\n`;
     });
 
     return listMessage || 'No players found.';
