@@ -526,10 +526,15 @@ function listSteamIds() {
     loadUsernameMap();
     let listMessage = '';
     usernameMap.forEach((value, key) => {
+        const profileUrl = `https://steamcommunity.com/profiles/${key}`;
         const currentName = value.names[value.names.length - 1];
         const originalName = value.names[0];
+        const showOriginalName = value.names.length > 1;
+        const nameDisplay = showOriginalName ? `${currentName} (og: ${originalName})` : currentName;
         const notes = value.notes || 'no notes';
-        listMessage += `${currentName} (og: ${originalName}) (${key}) - ${notes}\n`;
+
+        listMessage += `- [${nameDisplay}](<${profileUrl}>) (${key}) | ${notes}\n`;
     });
+
     return listMessage || 'No players found.';
 }
