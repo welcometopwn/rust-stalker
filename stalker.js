@@ -65,6 +65,9 @@ client.on('messageCreate', async message => {
         case 'check':
             await handleCheckCommand(message, args);
             break;
+        case 'edit':
+            await handleEditCommand(message, args);
+            break;
         default:
             message.reply('Unknown command.');
     }
@@ -150,6 +153,34 @@ async function handleCheckCommand(message, args) {
     }
     await checkSteamProfile(message, steamId);
 }
+
+// Function to handle edit command
+async function handleEditCommand(message, args) {
+    if (args.length < 2) {
+        message.reply('Please provide a Steam ID and the new comment.');
+        return;
+    }
+
+    const steamId = await resolveSteamId(args[0]);
+    if (!steamId) {
+        message.reply('Invalid Steam ID or Steam community link.');
+        return;
+    }
+
+    const newComment = args.slice(1).join(' ');
+
+    loadUsernameMap();
+    if (usernameMap.has(steamId)) {
+        const entry = usernameMap.get(steamId);
+        entry.notes = newComment;
+        usernameMap.set(steamId, entry);
+        saveUsernameMap();
+        message.reply(`Comment for [${entry.names[entry.names.length - 1]}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been updated.`);
+    } else {
+        message.reply(`Steam ID ${steamId} not found.`);
+    }
+}
+
 
 // Function to add a Steam ID
 async function addSteamId(steamId, notes) {
