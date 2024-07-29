@@ -15,6 +15,7 @@ const defaultConfig = {
     intervalMinutes: 60,
     discordToken: 'your_discord_bot_token',
     channelId: 'your_channel_id',
+    roleId: 'your_role_id',
     debug: false
 };
 
@@ -30,7 +31,7 @@ function loadConfig() {
 }
 
 const config = loadConfig();
-const { apiKey, intervalMinutes, discordToken, channelId, debug } = config;
+const { apiKey, intervalMinutes, discordToken, channelId, roleId, debug } = config;
 
 // Set interval based on debug mode
 const interval = debug ? 5000 : intervalMinutes * 60 * 1000;
@@ -187,13 +188,32 @@ async function addSteamId(steamId, notes) {
     loadUsernameMap();
 
     const playerSummaryUrl = `http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${apiKey}&steamids=${steamId}`;
+    const playerBansUrl = `http://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?key=${apiKey}&steamids=${steamId}`;
+
     try {
-        const playerSummaryResponse = await axios.get(playerSummaryUrl);
+        const [playerSummaryResponse, playerBansResponse] = await Promise.all([
+            axios.get(playerSummaryUrl),
+            axios.get(playerBansUrl)
+        ]);
+
         const player = playerSummaryResponse.data.response.players[0];
         const currentName = player.personaname;
 
+        const bans = playerBansResponse.data.players[0];
+        const gameBans = bans.NumberOfGameBans || 0;
+        const vacBans = bans.NumberOfVACBans || 0;
+
         if (!usernameMap.has(steamId)) {
-            usernameMap.set(steamId, { names: [currentName], data: {}, notes: notes });
+            usernameMap.set(steamId, {
+                names: [currentName],
+                data: {
+                    gameBans: gameBans,
+                    vacBans: vacBans,
+                    lastGameBan: gameBans > 0 ? bans.GameBanDate : null,
+                    lastVacBan: vacBans > 0 ? bans.DaysSinceLastBan : null
+                },
+                notes: notes
+            });
             saveUsernameMap();
             removedIds.delete(steamId);
             return `[${currentName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has been added.`;
@@ -202,9 +222,10 @@ async function addSteamId(steamId, notes) {
         }
     } catch (error) {
         console.error('Error fetching Steam profile:', error);
-        return `Failed to fetch the username for Steam ID ${steamId}.`;
+        return `Failed to fetch the username or bans for Steam ID ${steamId}.`;
     }
 }
+
 
 // Function to remove a Steam ID
 function removeSteamId(steamId) {
@@ -323,6 +344,20 @@ async function checkSteamProfiles() {
                 const currentName = player.personaname;
                 const bans = playerBans[steamId];
 
+                const gameBans = bans.NumberOfGameBans || 0;
+                const vacBans = bans.NumberOfVACBans || 0;
+
+                // Check if the user is already in the database and if they have received a new ban
+                if (usernameMap.has(steamId)) {
+                    const user = usernameMap.get(steamId);
+                    const previousGameBans = user.data.gameBans || 0;
+                    const previousVacBans = user.data.vacBans || 0;
+
+                    if (gameBans > previousGameBans || vacBans > previousVacBans) {
+                        sendBanAlert(steamId, currentName, gameBans, vacBans);
+                    }
+                }
+
                 // Default values if data is not available
                 let steamLevel = null;
                 let rustHours = 0;
@@ -350,10 +385,10 @@ async function checkSteamProfiles() {
                     steamLevel: steamLevel,
                     rustHours: rustHours,
                     friendsCount: friendsCount,
-                    gameBans: bans.NumberOfGameBans || 0,
-                    lastGameBan: bans.NumberOfGameBans > 0 ? bans.GameBanDate : null,
-                    vacBans: bans.NumberOfVACBans || 0,
-                    lastVacBan: bans.NumberOfVACBans > 0 ? bans.DaysSinceLastBan : null,
+                    gameBans: gameBans,
+                    lastGameBan: gameBans > 0 ? bans.GameBanDate : null,
+                    vacBans: vacBans,
+                    lastVacBan: vacBans > 0 ? bans.DaysSinceLastBan : null,
                     lastOnline: player.personastate === 0 ? formatLastOnline(player.lastlogoff) : "Online",
                     profileStatus: player.communityvisibilitystate === 3 ? 'Public' : 'Private',
                 };
@@ -373,6 +408,26 @@ async function checkSteamProfiles() {
     // Schedule the next check
     setTimeout(checkSteamProfiles, interval);
 }
+
+function sendBanAlert(steamId, playerName, gameBans, vacBans) {
+    let alertMessage;
+   
+    if (gameBans > 0) {
+        alertMessage = `<@&${roleId}>[${playerName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has received a gameban.`;
+    } else if (vacBans > 0) {
+        alertMessage = `<@&${roleId}>[${playerName}](<https://steamcommunity.com/profiles/${steamId}>) (${steamId}) has received a VAC ban.`;
+    }
+
+    const channel = client.channels.cache.get(channelId);
+    if (channel) {
+        channel.send(alertMessage).catch(err => {
+            console.error('Error sending ban alert to Discord:', err);
+        });
+    } else {
+        console.error('Channel not found for sending ban alert');
+    }
+}
+
 
 // Function to check a Steam profile and send an embed to Discord
 async function checkSteamProfile(message, steamId) {
